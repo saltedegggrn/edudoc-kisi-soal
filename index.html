@@ -2657,7 +2657,7 @@
                                             </div>
                                             <div class="whitespace-pre-line leading-relaxed">${escapeHTML(it.questionText)}</div>
                                             ${it.questionImage ? `<div><img src="${escapeAttr(it.questionImage)}" class="max-h-48 object-contain border border-slate-300 p-1"></div>` : ''}
-                                            ${renderItemBodyForPrint(it, true)}
+                                            ${renderItemBodyForPrint(it, false)}
                                         </td>
                                     </tr>
                                     <tr class="bg-slate-50">
@@ -2710,7 +2710,7 @@
             sheet.innerHTML = `
                 <div class="doc-serif text-black space-y-4">
                     <div class="text-center border-b-2 border-black pb-2.5 space-y-0.5">
-                        <div class="text-xs font-bold uppercase tracking-wider">YAYASAN PENDIDIKAN ASSA'ADAH</div>
+                        <div class="text-xs font-bold uppercase tracking-wider">YAYASAN PESANTREN NAILUS SA'ADAH</div>
                         <div class="text-base font-bold uppercase">${escapeHTML(FIXED_SCHOOL_NAME)}</div>
                         <div class="text-sm font-bold uppercase">${escapeHTML(doc.title)} &bull; TAHUN PELAJARAN ${escapeHTML(doc.academicYear)}</div>
                         ${naskahShowAnswerKey ? `<div class="inline-block px-3 py-0.5 mt-1 border border-black font-sans text-[11px] font-extrabold uppercase bg-amber-100">PEGANGAN GURU / PROKTOR (SOAL + KUNCI JAWABAN)</div>` : ''}
@@ -3018,17 +3018,17 @@
         });
     </script>
     <!-- ===================================================================== -->
-    <!-- SCRIPT INTEGRASI GOOGLE SHEETS & REALTIME SYNC (EDUDOC V3)           -->
+    <!-- SCRIPT INTEGRASI GOOGLE SHEETS & REALTIME SYNC (EDUDOC V3 - INDEX_9)  -->
     <!-- ===================================================================== -->
     <script>
         // GANTI URL DI BAWAH INI DENGAN URL WEB APP APPS SCRIPT ANDA (/exec)
-        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxAYpHP1NZ2G1fhB1j8x4hnStC0biGRy3kZPqYq1PdFLzprG-kSoXDUYu8jRYSubX5O/exec';
+        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyhKGuoLBDotE-BRZi911GuU_yTPl_A2HFPAeTAnBwHEAYVbwyIC5sOPU2V7mQ1LoGm/exec';
 
         let isSyncingCloud = false;
         let pendingPushTimeout = null;
         let pausePullUntil = 0;
 
-        // 1. Tarik Data dari Google Sheets ke Website
+        // 1. Tarik Data (Users, Documents, & Pengaturan Kepala Sekolah) dari Google Sheets
         async function pullFromGoogleSheets(isInitial = false) {
             if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes('PASTE_URL')) return;
             if (isSyncingCloud) return;
@@ -3042,12 +3042,24 @@
                 if (!isInitial && Date.now() < pausePullUntil) return;
 
                 if (json.status === 'ok' && json.data) {
+                    if (json.data.schoolSettings) {
+                        globalSchoolSettings = {
+                            schoolName: FIXED_SCHOOL_NAME,
+                            principalName: json.data.schoolSettings.principalName || DEFAULT_PRINCIPAL_NAME,
+                            principalNuptk: json.data.schoolSettings.principalNuptk || DEFAULT_PRINCIPAL_NUPTK
+                        };
+                    }
+
                     usersList = json.data.users || [];
                     ensureDefaultMaster();
 
                     documentsList = json.data.documents || [];
                     documentsList.forEach(d => {
-                        if (d) d.schoolName = FIXED_SCHOOL_NAME;
+                        if (d) {
+                            d.schoolName = FIXED_SCHOOL_NAME;
+                            d.principalName = globalSchoolSettings.principalName;
+                            d.principalNuptk = globalSchoolSettings.principalNuptk;
+                        }
                     });
 
                     saveAllData();
@@ -3063,7 +3075,7 @@
             }
         }
 
-        // 2. Kirim Perubahan dari Website ke Google Sheets
+        // 2. Kirim Perubahan (Users, Documents, & Pengaturan Kepala Sekolah) ke Google Sheets
         function pushToGoogleSheets() {
             if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes('PASTE_URL')) return;
 
@@ -3079,7 +3091,8 @@
                         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                         body: JSON.stringify({
                             users: usersList,
-                            documents: documentsList
+                            documents: documentsList,
+                            schoolSettings: globalSchoolSettings
                         })
                     });
                 } catch (err) {
@@ -3106,6 +3119,12 @@
                 if (navName) navName.textContent = refreshedMe.name;
             }
 
+            // Perbarui tampilan nama/NUPTK Kepala Sekolah yang terkunci di modal buat dokumen baru
+            const ndPName = document.getElementById('nd-principal-name-display');
+            const ndPNuptk = document.getElementById('nd-principal-nuptk-display');
+            if (ndPName) ndPName.textContent = globalSchoolSettings.principalName;
+            if (ndPNuptk) ndPNuptk.textContent = globalSchoolSettings.principalNuptk;
+
             if (activeUser.role === 'MASTER') {
                 populateTeacherFilterDropdown();
                 renderMasterSubmissionsList();
@@ -3124,6 +3143,11 @@
                 if (activeDocumentId) {
                     const doc = documentsList.find(d => d.id === activeDocumentId);
                     if (doc) {
+                        const metaPName = document.getElementById('meta-principal-name');
+                        const metaPNuptk = document.getElementById('meta-principal-nuptk');
+                        if (metaPName) metaPName.value = globalSchoolSettings.principalName;
+                        if (metaPNuptk) metaPNuptk.value = globalSchoolSettings.principalNuptk;
+
                         const badgeEl = document.getElementById('editor-doc-status-badge');
                         if (badgeEl) {
                             badgeEl.outerHTML = `<span id="editor-doc-status-badge">${getDocStatusBadgeHTML(doc.submissionStatus)}</span>`;
