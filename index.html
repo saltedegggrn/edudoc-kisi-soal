@@ -2403,14 +2403,18 @@
         function renderItemBodyForPrint(it, showAnswerHighlight = false) {
             if (it.formType === 'Pilihan Ganda' || it.formType === 'Pilihan Ganda Kompleks') {
                 const opts = Array.isArray(it.options) ? it.options : [];
+                const isComplex = it.formType === 'Pilihan Ganda Kompleks';
                 return `
                     <div class="space-y-1.5 pl-4 pt-1">
                         ${opts.map((opt, idx) => {
                             const letter = getOptionLetter(idx);
                             const isCorrect = showAnswerHighlight && opt.isCorrect;
+                            const prefixHTML = isComplex
+                                ? `<span class="inline-flex items-center justify-center w-[14px] h-[14px] border-[1.5px] border-black bg-white mt-[3px] shrink-0 text-[11px] font-sans font-black leading-none">${isCorrect ? '&#10003;' : ''}</span>`
+                                : `<span class="font-bold shrink-0">${letter}.</span>`;
                             return `
-                                <div class="flex items-start gap-2 ${isCorrect ? 'font-bold bg-emerald-50 border border-emerald-400 px-2 py-0.5 rounded' : ''}">
-                                    <span class="font-bold shrink-0">${letter}.</span>
+                                <div class="flex items-start gap-2.5 ${isCorrect ? 'font-bold bg-emerald-50 border border-emerald-400 px-2 py-0.5 rounded' : ''}">
+                                    ${prefixHTML}
                                     <div class="space-y-1">
                                         ${opt.text ? `<span>${escapeHTML(opt.text)}</span>` : ''}
                                         ${opt.image ? `<div><img src="${escapeAttr(opt.image)}" class="max-h-24 object-contain border border-slate-300 p-0.5"></div>` : ''}
@@ -3018,17 +3022,17 @@
         });
     </script>
     <!-- ===================================================================== -->
-    <!-- SCRIPT INTEGRASI GOOGLE SHEETS & REALTIME SYNC (EDUDOC V3 - INDEX_9)  -->
+    <!-- SCRIPT INTEGRASI GOOGLE SHEETS & REALTIME SYNC (EDUDOC V3 - INDEX_10) -->
     <!-- ===================================================================== -->
     <script>
         // GANTI URL DI BAWAH INI DENGAN URL WEB APP APPS SCRIPT ANDA (/exec)
-        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyhKGuoLBDotE-BRZi911GuU_yTPl_A2HFPAeTAnBwHEAYVbwyIC5sOPU2V7mQ1LoGm/exec';
+        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzWhBEs-37tU9KY0CQ0tnM2KWocWSuN2EAJikFCkWq7MR2i7mNMa66hWgnOcVaBb5c3JA/exec';
 
         let isSyncingCloud = false;
         let pendingPushTimeout = null;
         let pausePullUntil = 0;
 
-        // 1. Tarik Data (Users, Documents, & Pengaturan Kepala Sekolah) dari Google Sheets
+        // 1. Tarik Data dari Google Sheets ke Website
         async function pullFromGoogleSheets(isInitial = false) {
             if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes('PASTE_URL')) return;
             if (isSyncingCloud) return;
@@ -3075,7 +3079,7 @@
             }
         }
 
-        // 2. Kirim Perubahan (Users, Documents, & Pengaturan Kepala Sekolah) ke Google Sheets
+        // 2. Kirim Perubahan dari Website ke Google Sheets
         function pushToGoogleSheets() {
             if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes('PASTE_URL')) return;
 
@@ -3119,7 +3123,6 @@
                 if (navName) navName.textContent = refreshedMe.name;
             }
 
-            // Perbarui tampilan nama/NUPTK Kepala Sekolah yang terkunci di modal buat dokumen baru
             const ndPName = document.getElementById('nd-principal-name-display');
             const ndPNuptk = document.getElementById('nd-principal-nuptk-display');
             if (ndPName) ndPName.textContent = globalSchoolSettings.principalName;
@@ -3168,7 +3171,6 @@
             }
         }
 
-        // Tarik data awal saat halaman dibuka & sinkronisasi tiap 5 detik
         window.addEventListener('DOMContentLoaded', () => {
             pullFromGoogleSheets(true);
             setInterval(() => pullFromGoogleSheets(false), 5000);
