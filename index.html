@@ -3021,18 +3021,18 @@
             refreshIcons();
         });
     </script>
-    <!-- ===================================================================== -->
-    <!-- SCRIPT INTEGRASI GOOGLE SHEETS & REALTIME SYNC (EDUDOC V3 - INDEX_10) -->
+   <!-- ===================================================================== -->
+    <!-- SCRIPT INTEGRASI GOOGLE SHEETS & REALTIME SYNC (STABILIZED)         -->
     <!-- ===================================================================== -->
     <script>
         // GANTI URL DI BAWAH INI DENGAN URL WEB APP APPS SCRIPT ANDA (/exec)
-        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzWhBEs-37tU9KY0CQ0tnM2KWocWSuN2EAJikFCkWq7MR2i7mNMa66hWgnOcVaBb5c3JA/exec';
+        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz4p6NAC9pjvKnfVuvSYTXIpWm228tTcgeCuh1BjKejPp4wLOnMuJhynDidbjK3j0PtBA/exec';
 
         let isSyncingCloud = false;
         let pendingPushTimeout = null;
         let pausePullUntil = 0;
 
-        // 1. Tarik Data dari Google Sheets ke Website
+        // 1. Tarik Data dari Google Sheets dengan Proteksi Timpa Dokumen Lokal
         async function pullFromGoogleSheets(isInitial = false) {
             if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes('PASTE_URL')) return;
             if (isSyncingCloud) return;
@@ -3054,10 +3054,23 @@
                         };
                     }
 
-                    usersList = json.data.users || [];
-                    ensureDefaultMaster();
+                    if (Array.isArray(json.data.users) && json.data.users.length > 0) {
+                        usersList = json.data.users;
+                        ensureDefaultMaster();
+                    }
 
-                    documentsList = json.data.documents || [];
+                    // Proteksi: Hanya update documentsList dari server jika server memiliki data,
+                    // atau gabungkan untuk mencegah data lokal yang baru dibuat terhapus tiba-tiba.
+                    if (Array.isArray(json.data.documents)) {
+                        const serverDocs = json.data.documents;
+                        if (serverDocs.length > 0 || documentsList.length === 0) {
+                            documentsList = serverDocs;
+                        } else {
+                            // Jika server kosong tapi lokal punya data, prioritaskan push data lokal ke server
+                            pushToGoogleSheets();
+                        }
+                    }
+
                     documentsList.forEach(d => {
                         if (d) {
                             d.schoolName = FIXED_SCHOOL_NAME;
@@ -3073,21 +3086,21 @@
                     }
                 }
             } catch (err) {
-                console.warn('Sinkronisasi tertunda:', err);
+                console.warn('Sinkronisasi tertunda (menggunakan data lokal):', err);
             } finally {
                 isSyncingCloud = false;
             }
         }
 
-        // 2. Kirim Perubahan dari Website ke Google Sheets
+        // 2. Kirim Perubahan dari Website ke Google Sheets dengan Debounce Aman
         function pushToGoogleSheets() {
             if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes('PASTE_URL')) return;
 
-            pausePullUntil = Date.now() + 6000;
+            // Jeda pull otomatis selama 8 detik setelah melakukan perubahan lokal
+            pausePullUntil = Date.now() + 8000;
 
             clearTimeout(pendingPushTimeout);
             pendingPushTimeout = setTimeout(async () => {
-                pausePullUntil = Date.now() + 5000;
                 try {
                     await fetch(APPS_SCRIPT_URL, {
                         method: 'POST',
@@ -3102,7 +3115,7 @@
                 } catch (err) {
                     console.error('Gagal mengirim data ke Google Sheets:', err);
                 }
-            }, 500);
+            }, 800);
         }
 
         // 3. Menimpa fungsi broadcastSync agar otomatis push ke Google Sheets
@@ -3173,7 +3186,7 @@
 
         window.addEventListener('DOMContentLoaded', () => {
             pullFromGoogleSheets(true);
-            setInterval(() => pullFromGoogleSheets(false), 5000);
+            setInterval(() => pullFromGoogleSheets(false), 8000); // Interval diperpanjang jadi 8 detik agar lebih stabil
         });
     </script>
 </body>
