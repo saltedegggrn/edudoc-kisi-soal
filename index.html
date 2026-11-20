@@ -3024,175 +3024,181 @@
         });
     </script>
 <!-- ===================================================================== -->
-    <!-- SCRIPT INTEGRASI SUPABASE CLOUD (EDUDOC)                              -->
-    <!-- ===================================================================== -->
-    <script>
-        // GANTI DENGAN KREDENSIAL SUPABASE ANDA
-        const SUPABASE_URL = 'https://euqpizkyvqvjpfcyxhov.supabase.co';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1cXBpemt5dnF2anBmY3l4aG92Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUxMjc3MjIsImV4cCI6MjExMDcwMzcyMn0.Bq2PsZN5j2gnir4FFfSSEzMysGuHa-QLQ8ySPDdHqJI';
+<!-- SCRIPT INTEGRASI SUPABASE CLOUD (EDUDOC) - AMAN & OTOMATIS            -->
+<!-- ===================================================================== -->
+<script>
+    // GANTI DENGAN KREDENSIAL SUPABASE ANDA
+    const SUPABASE_URL = 'https://hkjxdbmhgopmfgbqxfvg.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhranhkYm1oZ29wbWZnYnF4ZnZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUwOTE1NjQsImV4cCI6MjExMDY2NzU2NH0.YZ-PWiD8jd9ITM4ASx7DSTLnR9mKNueo3KNftSE4-wQ';
 
-        let supabaseClient = null;
+    let supabaseClient = null;
+
+    // Fungsi inisialisasi yang aman setelah DOM dan CDN siap
+    function initSupabaseConnection() {
         try {
-            if (window.supabase && SUPABASE_URL && !SUPABASE_URL.includes('PASTE_')) {
+            if (window.supabase && typeof window.supabase.createClient === 'function') {
                 supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+                console.log("Supabase Client berhasil diinisialisasi!", supabaseClient);
+            } else {
+                console.warn("Pustaka Supabase belum dimuat oleh browser.");
             }
         } catch (e) {
-            console.warn('Gagal menginisialisasi Supabase:', e);
+            console.error("Gagal menginisialisasi Supabase:", e);
         }
+    }
 
-        let isSyncingSupabase = false;
-        let isPushingSupabase = false;
-        let pendingPushTimer = null;
-        let pausePullUntil = 0;
+    let isSyncingSupabase = false;
+    let isPushingSupabase = false;
+    let pendingPushTimer = null;
+    let pausePullUntil = 0;
 
-        // 1. Tarik Data dari Supabase Cloud ke Website
-        async function pullFromSupabase(isInitial = false) {
-            if (!supabaseClient || isSyncingSupabase || isPushingSupabase) return;
-            if (!isInitial && Date.now() < pausePullUntil) return;
+    // 1. Tarik Data dari Supabase Cloud ke Website
+    async function pullFromSupabase(isInitial = false) {
+        if (!supabaseClient || isSyncingSupabase || isPushingSupabase) return;
+        if (!isInitial && Date.now() < pausePullUntil) return;
+
+        try {
+            isSyncingSupabase = true;
+
+            // Ambil Users
+            const { data: usersData, error: uErr } = await supabaseClient.from('edudoc_users').select('*');
+            if (!uErr && Array.isArray(usersData) && usersData.length > 0) {
+                usersList = usersData.map(u => ({
+                    id: u.id,
+                    name: u.name,
+                    nuptk: u.nuptk || '-',
+                    subject: u.subject || '',
+                    username: u.username,
+                    password: u.password,
+                    role: String(u.role || 'GURU').toUpperCase()
+                }));
+                ensureDefaultMaster();
+                safeStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(usersList));
+            }
+
+            // Ambil Documents
+            const { data: docsData, error: dErr } = await supabaseClient.from('edudoc_documents').select('*');
+            if (!dErr && Array.isArray(docsData)) {
+                documentsList = docsData.map(row => ({
+                    id: row.id,
+                    ownerId: row.owner_id,
+                    ...(row.documents_json || {})
+                }));
+                safeStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(documentsList));
+            }
+
+            // Ambil School Settings
+            const { data: setRow, error: sErr } = await supabaseClient.from('edudoc_school_settings').select('*').eq('id', 1).single();
+            if (!sErr && setRow && setRow.settings_json) {
+                safeStorage.setItem(STORAGE_KEYS.SCHOOL_SETTINGS, JSON.stringify(setRow.settings_json));
+            }
+
+            if (!isInitial && activeUser) {
+                handleIncomingSync();
+            }
+        } catch (err) {
+            console.warn('Sinkronisasi Supabase tertunda:', err);
+        } finally {
+            isSyncingSupabase = false;
+        }
+    }
+
+    // 2. Kirim Perubahan dari Website ke Supabase Cloud
+    function pushToSupabase(options = { syncUsers: false, syncDocs: false, syncSettings: false }) {
+        if (!supabaseClient) return;
+
+        pausePullUntil = Date.now() + 10000;
+        clearTimeout(pendingPushTimer);
+
+        pendingPushTimer = setTimeout(async () => {
+            isPushingSupabase = true;
+            pausePullUntil = Date.now() + 10000;
 
             try {
-                isSyncingSupabase = true;
-
-                // Ambil Users
-                const { data: usersData, error: uErr } = await supabaseClient.from('edudoc_users').select('*');
-                if (!uErr && Array.isArray(usersData) && usersData.length > 0) {
-                    usersList = usersData.map(u => ({
+                // Sync Users
+                if (options.syncUsers && usersList.length > 0) {
+                    const rows = usersList.map(u => ({
                         id: u.id,
                         name: u.name,
                         nuptk: u.nuptk || '-',
                         subject: u.subject || '',
                         username: u.username,
                         password: u.password,
-                        role: String(u.role || 'GURU').toUpperCase()
+                        role: u.role || 'GURU'
                     }));
-                    ensureDefaultMaster();
-                    safeStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(usersList));
+                    await supabaseClient.from('edudoc_users').upsert(rows);
                 }
 
-                // Ambil Documents
-                const { data: docsData, error: dErr } = await supabaseClient.from('edudoc_documents').select('*');
-                if (!dErr && Array.isArray(docsData)) {
-                    documentsList = docsData.map(row => ({
-                        id: row.id,
-                        ownerId: row.owner_id,
-                        ...(row.documents_json || {})
-                    }));
-                    safeStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(documentsList));
-                }
-
-                // Ambil School Settings
-                const { data: setRow, error: sErr } = await supabaseClient.from('edudoc_school_settings').select('*').eq('id', 1).single();
-                if (!sErr && setRow && setRow.settings_json) {
-                    safeStorage.setItem(STORAGE_KEYS.SCHOOL_SETTINGS, JSON.stringify(setRow.settings_json));
-                }
-
-                if (!isInitial && activeUser) {
-                    handleIncomingSync();
-                }
-            } catch (err) {
-                console.warn('Sinkronisasi Supabase tertunda:', err);
-            } finally {
-                isSyncingSupabase = false;
-            }
-        }
-
-        // 2. Kirim Perubahan dari Website ke Supabase Cloud
-        function pushToSupabase(options = { syncUsers: false, syncDocs: false, syncSettings: false }) {
-            if (!supabaseClient) return;
-
-            pausePullUntil = Date.now() + 10000;
-            clearTimeout(pendingPushTimer);
-
-            pendingPushTimer = setTimeout(async () => {
-                isPushingSupabase = true;
-                pausePullUntil = Date.now() + 10000;
-
-                try {
-                    // Sync Users
-                    if (options.syncUsers && usersList.length > 0) {
-                        const rows = usersList.map(u => ({
-                            id: u.id,
-                            name: u.name,
-                            nuptk: u.nuptk || '-',
-                            subject: u.subject || '',
-                            username: u.username,
-                            password: u.password,
-                            role: u.role || 'GURU'
-                        }));
-                        await supabaseClient.from('edudoc_users').upsert(rows);
-                    }
-
-                    // Sync Documents
-                    if (options.syncDocs) {
-                        for (const doc of documentsList) {
-                            if (doc && doc.id) {
-                                const { ownerId, ...docBody } = doc;
-                                await supabaseClient.from('edudoc_documents').upsert({
-                                    id: doc.id,
-                                    owner_id: doc.ownerId,
-                                    documents_json: docBody,
-                                    updated_at: new Date().toISOString()
-                                });
-                            }
+                // Sync Documents
+                if (options.syncDocs) {
+                    for (const doc of documentsList) {
+                        if (doc && doc.id) {
+                            const { ownerId, ...docBody } = doc;
+                            await supabaseClient.from('edudoc_documents').upsert({
+                                id: doc.id,
+                                owner_id: doc.ownerId,
+                                documents_json: docBody,
+                                updated_at: new Date().toISOString()
+                            });
                         }
                     }
-
-                    // Sync School Settings
-                    if (options.syncSettings) {
-                        const settings = getGlobalSchoolSettings();
-                        await supabaseClient.from('edudoc_school_settings').upsert({
-                            id: 1,
-                            settings_json: settings,
-                            updated_at: new Date().toISOString()
-                        });
-                    }
-                } catch (err) {
-                    console.error('Gagal mengirim data ke Supabase:', err);
-                } finally {
-                    isPushingSupabase = false;
-                    pausePullUntil = Date.now() + 3000;
                 }
-            }, 600);
+
+                // Sync School Settings
+                if (options.syncSettings) {
+                    const settings = getGlobalSchoolSettings();
+                    await supabaseClient.from('edudoc_school_settings').upsert({
+                        id: 1,
+                        settings_json: settings,
+                        updated_at: new Date().toISOString()
+                    });
+                }
+            } catch (err) {
+                console.error('Gagal mengirim data ke Supabase:', err);
+            } finally {
+                isPushingSupabase = false;
+                pausePullUntil = Date.now() + 3000;
+            }
+        }, 600);
+    }
+
+    // 3. Kaitkan fungsi simpan agar otomatis sinkron ke Supabase
+    const _origBroadcastSync = broadcastSync;
+    broadcastSync = function(type, payload) {
+        _origBroadcastSync(type, payload);
+        pushToSupabase({ syncUsers: true, syncDocs: true, syncSettings: true });
+    };
+
+    const _origConfirmDeleteTeacherAccount = confirmDeleteTeacherAccount;
+    confirmDeleteTeacherAccount = function(userId) {
+        _origConfirmDeleteTeacherAccount(userId);
+        if (supabaseClient) {
+            supabaseClient.from('edudoc_users').delete().eq('id', userId).then();
         }
+    };
 
-        // 3. Kaitkan fungsi simpan agar otomatis sinkron ke Supabase
-        const _origBroadcastSync = broadcastSync;
-        broadcastSync = function(type, payload) {
-            _origBroadcastSync(type, payload);
-            pushToSupabase({ syncUsers: true, syncDocs: true, syncSettings: true });
-        };
+    const _origConfirmDeleteTeacherDocument = confirmDeleteTeacherDocument;
+    confirmDeleteTeacherDocument = function(docId) {
+        _origConfirmDeleteTeacherDocument(docId);
+        if (supabaseClient) {
+            supabaseClient.from('edudoc_documents').delete().eq('id', docId).then();
+        }
+    };
 
-        // Tangani aksi Hapus Pengguna (Delete User) agar langsung terhapus di Supabase
-        const _origConfirmDeleteTeacherAccount = confirmDeleteTeacherAccount;
-        confirmDeleteTeacherAccount = function(userId) {
-            _origConfirmDeleteTeacherAccount(userId);
-            if (supabaseClient) {
-                supabaseClient.from('edudoc_users').delete().eq('id', userId).then();
-            }
-        };
-
-        // Tangani aksi Hapus Dokumen agar langsung terhapus di Supabase
-        const _origConfirmDeleteTeacherDocument = confirmDeleteTeacherDocument;
-        confirmDeleteTeacherDocument = function(docId) {
-            _origConfirmDeleteTeacherDocument(docId);
-            if (supabaseClient) {
-                supabaseClient.from('edudoc_documents').delete().eq('id', docId).then();
-            }
-        };
-
-        window.addEventListener('DOMContentLoaded', () => {
+    window.addEventListener('DOMContentLoaded', () => {
+        initSupabaseConnection();
+        if (supabaseClient) {
             pullFromSupabase(true);
             setInterval(() => pullFromSupabase(false), 7000);
 
-            if (supabaseClient) {
-                supabaseClient
-                    .channel('edudoc-public-db-changes')
-                    .on('postgres_changes', { event: '*', schema: 'public' }, () => {
-                        pullFromSupabase(false);
-                    })
-                    .subscribe();
-            }
-        });
-    </script>
+            supabaseClient
+                .channel('edudoc-public-db-changes')
+                .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+                    pullFromSupabase(false);
+                })
+                .subscribe();
+        }
+    });
+</script>
 </body>
 </html>
