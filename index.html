@@ -2190,12 +2190,18 @@
                     ? draftMatchRight.map(r => r.trim())
                     : [],
                 tfRows: formType === 'Benar / Salah'
-                    ? draftTfRows.map(t => ({ statement: t.statement.trim(), isTrue: Boolean(t.isTrue) }))
+                    ? draftTfRows.map(t => ({ statement: (t.statement || '').trim(), isTrue: Boolean(t.isTrue) }))
                     : [],
                 answerKey: document.getElementById('item-answer-key').value.trim(),
                 scoreWeight: document.getElementById('item-score-weight').value.trim() || '1',
                 rubric: document.getElementById('item-rubric').value.trim()
             };
+
+            // Validasi khusus Benar / Salah agar tidak kosong
+            if (formType === 'Benar / Salah' && itemPayload.tfRows.length === 0) {
+                showToast('Tambahkan minimal 1 pernyataan Benar / Salah!', 'warning');
+                return;
+            }
 
             if (editId) {
                 const idx = doc.items.findIndex(it => it.id === editId);
