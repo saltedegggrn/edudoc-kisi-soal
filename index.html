@@ -3021,172 +3021,175 @@
             refreshIcons();
         });
     </script>
-   <!-- ===================================================================== -->
-    <!-- SCRIPT INTEGRASI GOOGLE SHEETS & REALTIME SYNC (STABILIZED)         -->
+<!-- ===================================================================== -->
+    <!-- SCRIPT INTEGRASI SUPABASE CLOUD (EDUDOC)                              -->
     <!-- ===================================================================== -->
     <script>
-        // GANTI URL DI BAWAH INI DENGAN URL WEB APP APPS SCRIPT ANDA (/exec)
-        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz4p6NAC9pjvKnfVuvSYTXIpWm228tTcgeCuh1BjKejPp4wLOnMuJhynDidbjK3j0PtBA/exec';
+        // GANTI DENGAN KREDENSIAL SUPABASE ANDA
+        const SUPABASE_URL = 'https://euqpizkyvqvjpfcyxhov.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1cXBpemt5dnF2anBmY3l4aG92Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUxMjc3MjIsImV4cCI6MjExMDcwMzcyMn0.Bq2PsZN5j2gnir4FFfSSEzMysGuHa-QLQ8ySPDdHqJI';
 
-        let isSyncingCloud = false;
-        let pendingPushTimeout = null;
+        let supabaseClient = null;
+        try {
+            if (window.supabase && SUPABASE_URL && !SUPABASE_URL.includes('PASTE_')) {
+                supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            }
+        } catch (e) {
+            console.warn('Gagal menginisialisasi Supabase:', e);
+        }
+
+        let isSyncingSupabase = false;
+        let isPushingSupabase = false;
+        let pendingPushTimer = null;
         let pausePullUntil = 0;
 
-        // 1. Tarik Data dari Google Sheets dengan Proteksi Timpa Dokumen Lokal
-        async function pullFromGoogleSheets(isInitial = false) {
-            if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes('PASTE_URL')) return;
-            if (isSyncingCloud) return;
+        // 1. Tarik Data dari Supabase Cloud ke Website
+        async function pullFromSupabase(isInitial = false) {
+            if (!supabaseClient || isSyncingSupabase || isPushingSupabase) return;
             if (!isInitial && Date.now() < pausePullUntil) return;
 
             try {
-                isSyncingCloud = true;
-                const res = await fetch(APPS_SCRIPT_URL);
-                const json = await res.json();
+                isSyncingSupabase = true;
 
-                if (!isInitial && Date.now() < pausePullUntil) return;
+                // Ambil Users
+                const { data: usersData, error: uErr } = await supabaseClient.from('edudoc_users').select('*');
+                if (!uErr && Array.isArray(usersData) && usersData.length > 0) {
+                    usersList = usersData.map(u => ({
+                        id: u.id,
+                        name: u.name,
+                        nuptk: u.nuptk || '-',
+                        subject: u.subject || '',
+                        username: u.username,
+                        password: u.password,
+                        role: String(u.role || 'GURU').toUpperCase()
+                    }));
+                    ensureDefaultMaster();
+                    safeStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(usersList));
+                }
 
-                if (json.status === 'ok' && json.data) {
-                    if (json.data.schoolSettings) {
-                        globalSchoolSettings = {
-                            schoolName: FIXED_SCHOOL_NAME,
-                            principalName: json.data.schoolSettings.principalName || DEFAULT_PRINCIPAL_NAME,
-                            principalNuptk: json.data.schoolSettings.principalNuptk || DEFAULT_PRINCIPAL_NUPTK
-                        };
-                    }
+                // Ambil Documents
+                const { data: docsData, error: dErr } = await supabaseClient.from('edudoc_documents').select('*');
+                if (!dErr && Array.isArray(docsData)) {
+                    documentsList = docsData.map(row => ({
+                        id: row.id,
+                        ownerId: row.owner_id,
+                        ...(row.documents_json || {})
+                    }));
+                    safeStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(documentsList));
+                }
 
-                    if (Array.isArray(json.data.users) && json.data.users.length > 0) {
-                        usersList = json.data.users;
-                        ensureDefaultMaster();
-                    }
+                // Ambil School Settings
+                const { data: setRow, error: sErr } = await supabaseClient.from('edudoc_school_settings').select('*').eq('id', 1).single();
+                if (!sErr && setRow && setRow.settings_json) {
+                    safeStorage.setItem(STORAGE_KEYS.SCHOOL_SETTINGS, JSON.stringify(setRow.settings_json));
+                }
 
-                    // Proteksi: Hanya update documentsList dari server jika server memiliki data,
-                    // atau gabungkan untuk mencegah data lokal yang baru dibuat terhapus tiba-tiba.
-                    if (Array.isArray(json.data.documents)) {
-                        const serverDocs = json.data.documents;
-                        if (serverDocs.length > 0 || documentsList.length === 0) {
-                            documentsList = serverDocs;
-                        } else {
-                            // Jika server kosong tapi lokal punya data, prioritaskan push data lokal ke server
-                            pushToGoogleSheets();
-                        }
-                    }
-
-                    documentsList.forEach(d => {
-                        if (d) {
-                            d.schoolName = FIXED_SCHOOL_NAME;
-                            d.principalName = globalSchoolSettings.principalName;
-                            d.principalNuptk = globalSchoolSettings.principalNuptk;
-                        }
-                    });
-
-                    saveAllData();
-
-                    if (!isInitial) {
-                        refreshActiveScreenAfterCloudSync();
-                    }
+                if (!isInitial && activeUser) {
+                    handleIncomingSync();
                 }
             } catch (err) {
-                console.warn('Sinkronisasi tertunda (menggunakan data lokal):', err);
+                console.warn('Sinkronisasi Supabase tertunda:', err);
             } finally {
-                isSyncingCloud = false;
+                isSyncingSupabase = false;
             }
         }
 
-        // 2. Kirim Perubahan dari Website ke Google Sheets dengan Debounce Aman
-        function pushToGoogleSheets() {
-            if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes('PASTE_URL')) return;
+        // 2. Kirim Perubahan dari Website ke Supabase Cloud
+        function pushToSupabase(options = { syncUsers: false, syncDocs: false, syncSettings: false }) {
+            if (!supabaseClient) return;
 
-            // Jeda pull otomatis selama 8 detik setelah melakukan perubahan lokal
-            pausePullUntil = Date.now() + 8000;
+            pausePullUntil = Date.now() + 10000;
+            clearTimeout(pendingPushTimer);
 
-            clearTimeout(pendingPushTimeout);
-            pendingPushTimeout = setTimeout(async () => {
+            pendingPushTimer = setTimeout(async () => {
+                isPushingSupabase = true;
+                pausePullUntil = Date.now() + 10000;
+
                 try {
-                    await fetch(APPS_SCRIPT_URL, {
-                        method: 'POST',
-                        mode: 'no-cors',
-                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify({
-                            users: usersList,
-                            documents: documentsList,
-                            schoolSettings: globalSchoolSettings
-                        })
-                    });
+                    // Sync Users
+                    if (options.syncUsers && usersList.length > 0) {
+                        const rows = usersList.map(u => ({
+                            id: u.id,
+                            name: u.name,
+                            nuptk: u.nuptk || '-',
+                            subject: u.subject || '',
+                            username: u.username,
+                            password: u.password,
+                            role: u.role || 'GURU'
+                        }));
+                        await supabaseClient.from('edudoc_users').upsert(rows);
+                    }
+
+                    // Sync Documents
+                    if (options.syncDocs) {
+                        for (const doc of documentsList) {
+                            if (doc && doc.id) {
+                                const { ownerId, ...docBody } = doc;
+                                await supabaseClient.from('edudoc_documents').upsert({
+                                    id: doc.id,
+                                    owner_id: doc.ownerId,
+                                    documents_json: docBody,
+                                    updated_at: new Date().toISOString()
+                                });
+                            }
+                        }
+                    }
+
+                    // Sync School Settings
+                    if (options.syncSettings) {
+                        const settings = getGlobalSchoolSettings();
+                        await supabaseClient.from('edudoc_school_settings').upsert({
+                            id: 1,
+                            settings_json: settings,
+                            updated_at: new Date().toISOString()
+                        });
+                    }
                 } catch (err) {
-                    console.error('Gagal mengirim data ke Google Sheets:', err);
+                    console.error('Gagal mengirim data ke Supabase:', err);
+                } finally {
+                    isPushingSupabase = false;
+                    pausePullUntil = Date.now() + 3000;
                 }
-            }, 800);
+            }, 600);
         }
 
-        // 3. Menimpa fungsi broadcastSync agar otomatis push ke Google Sheets
-        const originalBroadcastSync = broadcastSync;
-        broadcastSync = function(type, payload = {}) {
-            originalBroadcastSync(type, payload);
-            pushToGoogleSheets();
+        // 3. Kaitkan fungsi simpan agar otomatis sinkron ke Supabase
+        const _origBroadcastSync = broadcastSync;
+        broadcastSync = function(type, payload) {
+            _origBroadcastSync(type, payload);
+            pushToSupabase({ syncUsers: true, syncDocs: true, syncSettings: true });
         };
 
-        // 4. Refresh tampilan otomatis setelah menarik data terbaru dari cloud
-        function refreshActiveScreenAfterCloudSync() {
-            if (!activeUser) return;
-
-            const refreshedMe = usersList.find(u => u.id === activeUser.id);
-            if (refreshedMe) {
-                activeUser = refreshedMe;
-                const navName = document.getElementById('nav-user-name');
-                if (navName) navName.textContent = refreshedMe.name;
+        // Tangani aksi Hapus Pengguna (Delete User) agar langsung terhapus di Supabase
+        const _origConfirmDeleteTeacherAccount = confirmDeleteTeacherAccount;
+        confirmDeleteTeacherAccount = function(userId) {
+            _origConfirmDeleteTeacherAccount(userId);
+            if (supabaseClient) {
+                supabaseClient.from('edudoc_users').delete().eq('id', userId).then();
             }
+        };
 
-            const ndPName = document.getElementById('nd-principal-name-display');
-            const ndPNuptk = document.getElementById('nd-principal-nuptk-display');
-            if (ndPName) ndPName.textContent = globalSchoolSettings.principalName;
-            if (ndPNuptk) ndPNuptk.textContent = globalSchoolSettings.principalNuptk;
-
-            if (activeUser.role === 'MASTER') {
-                populateTeacherFilterDropdown();
-                renderMasterSubmissionsList();
-                renderProctorPrincipalSettingsForm();
-                renderTeachersManagementList();
-                if (activeDocumentId) {
-                    const doc = documentsList.find(d => d.id === activeDocumentId);
-                    if (doc && doc.submissionStatus !== 'DRAFT') {
-                        renderPrintableSheet();
-                    } else {
-                        backFromEditor();
-                    }
-                }
-            } else {
-                renderTeacherDocumentsGrid();
-                if (activeDocumentId) {
-                    const doc = documentsList.find(d => d.id === activeDocumentId);
-                    if (doc) {
-                        const metaPName = document.getElementById('meta-principal-name');
-                        const metaPNuptk = document.getElementById('meta-principal-nuptk');
-                        if (metaPName) metaPName.value = globalSchoolSettings.principalName;
-                        if (metaPNuptk) metaPNuptk.value = globalSchoolSettings.principalNuptk;
-
-                        const badgeEl = document.getElementById('editor-doc-status-badge');
-                        if (badgeEl) {
-                            badgeEl.outerHTML = `<span id="editor-doc-status-badge">${getDocStatusBadgeHTML(doc.submissionStatus)}</span>`;
-                        }
-                        const noteBanner = document.getElementById('editor-master-note-banner');
-                        if (noteBanner && doc.masterNote) {
-                            noteBanner.classList.remove('hidden');
-                            noteBanner.className = doc.submissionStatus === 'ACC'
-                                ? 'no-print rounded-2xl p-4 border bg-emerald-50 border-emerald-200 text-emerald-900 flex items-start gap-3'
-                                : 'no-print rounded-2xl p-4 border bg-amber-50 border-amber-200 text-amber-900 flex items-start gap-3';
-                            document.getElementById('editor-master-note-text').textContent = doc.masterNote;
-                        }
-                        renderPrintableSheet();
-                    } else {
-                        backFromEditor();
-                    }
-                }
+        // Tangani aksi Hapus Dokumen agar langsung terhapus di Supabase
+        const _origConfirmDeleteTeacherDocument = confirmDeleteTeacherDocument;
+        confirmDeleteTeacherDocument = function(docId) {
+            _origConfirmDeleteTeacherDocument(docId);
+            if (supabaseClient) {
+                supabaseClient.from('edudoc_documents').delete().eq('id', docId).then();
             }
-        }
+        };
 
         window.addEventListener('DOMContentLoaded', () => {
-            pullFromGoogleSheets(true);
-            setInterval(() => pullFromGoogleSheets(false), 8000); // Interval diperpanjang jadi 8 detik agar lebih stabil
+            pullFromSupabase(true);
+            setInterval(() => pullFromSupabase(false), 7000);
+
+            if (supabaseClient) {
+                supabaseClient
+                    .channel('edudoc-public-db-changes')
+                    .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+                        pullFromSupabase(false);
+                    })
+                    .subscribe();
+            }
         });
     </script>
 </body>
