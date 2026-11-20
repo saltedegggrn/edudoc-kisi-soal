@@ -1952,7 +1952,7 @@
             }
         }
 
-        function renderItemOptionsBuilder() {
+       function renderItemOptionsBuilder() {
             const type = document.getElementById('item-form-type').value;
             const wrapper = document.getElementById('item-options-wrapper');
             if (!wrapper) return;
@@ -2089,6 +2089,8 @@
                         <span>Bentuk <strong>Isian Singkat</strong>: Masukkan jawaban singkat yang diharapkan pada kolom <strong>Kunci Jawaban</strong> di bawah.</span>
                     </div>
                 `;
+                const keyInput = document.getElementById('item-answer-key');
+                if (keyInput && !keyInput.value) keyInput.value = 'Kebijakan Korektor';
             } else {
                 wrapper.innerHTML = `
                     <div class="text-xs text-slate-600 flex items-center gap-2">
@@ -2096,70 +2098,10 @@
                         <span>Bentuk <strong>Uraian / Esai</strong>: Tuliskan pokok-pokok jawaban benar pada <strong>Kunci Jawaban</strong> dan rincian skor pada <strong>Pedoman Penskoran</strong>.</span>
                     </div>
                 `;
+                const keyInput = document.getElementById('item-answer-key');
+                if (keyInput && !keyInput.value) keyInput.value = 'Kebijakan Guru / Sesuai Rubrik';
             }
             refreshIcons();
-        }
-
-        function compressImageFile(file, maxDim, callback) {
-            const reader = new FileReader();
-            reader.onload = function (e) {
-                const img = new Image();
-                img.onload = function () {
-                    let w = img.width;
-                    let h = img.height;
-                    if (w > maxDim || h > maxDim) {
-                        if (w > h) {
-                            h = Math.round((h * maxDim) / w);
-                            w = maxDim;
-                        } else {
-                            w = Math.round((w * maxDim) / h);
-                            h = maxDim;
-                        }
-                    }
-                    const canvas = document.createElement('canvas');
-                    canvas.width = w;
-                    canvas.height = h;
-                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                    callback(canvas.toDataURL('image/jpeg', 0.8));
-                };
-                img.src = e.target.result;
-            };
-            reader.readAsDataURL(file);
-        }
-
-        function handleItemImageUpload(event, targetInputId) {
-            const file = event.target.files && event.target.files[0];
-            if (!file) return;
-            compressImageFile(file, 850, (dataUrl) => {
-                const input = document.getElementById(targetInputId);
-                if (input) {
-                    input.value = dataUrl;
-                    previewItemImage(targetInputId);
-                }
-            });
-            event.target.value = '';
-        }
-
-        function previewItemImage(inputId) {
-            const input = document.getElementById(inputId);
-            const prev = document.getElementById(`${inputId}-preview`);
-            if (!input || !prev) return;
-            const val = input.value.trim();
-            if (!val) {
-                prev.classList.add('hidden');
-                prev.innerHTML = '';
-                return;
-            }
-            prev.classList.remove('hidden');
-            prev.innerHTML = `<img src="${escapeAttr(val)}" class="max-h-24 rounded-xl border border-slate-200 object-contain bg-white p-1">`;
-        }
-
-        function clearItemImage(inputId) {
-            const input = document.getElementById(inputId);
-            if (input) {
-                input.value = '';
-                previewItemImage(inputId);
-            }
         }
 
         function handleSaveKisiItem(e) {
@@ -2196,12 +2138,6 @@
                 scoreWeight: document.getElementById('item-score-weight').value.trim() || '1',
                 rubric: document.getElementById('item-rubric').value.trim()
             };
-
-            // Validasi khusus Benar / Salah agar tidak kosong
-            if (formType === 'Benar / Salah' && itemPayload.tfRows.length === 0) {
-                showToast('Tambahkan minimal 1 pernyataan Benar / Salah!', 'warning');
-                return;
-            }
 
             if (editId) {
                 const idx = doc.items.findIndex(it => it.id === editId);
